@@ -15,7 +15,8 @@ TELEGRAM_CHAT_ID      = os.environ['TELEGRAM_CHAT_ID']
 LINKEDIN_ACCESS_TOKEN = os.environ['LINKEDIN_ACCESS_TOKEN']
 
 # LinkedIn REST API version — format YYYYMM (6 chiffres, PAS de jour)
-LINKEDIN_VERSION = "202501"
+# LinkedIn supporte les versions sur ~2 ans — 202503 = Mars 2025, dans la fenêtre active
+LINKEDIN_VERSION = "202503"
 
 RSS_FEEDS = [
     "https://techcrunch.com/category/artificial-intelligence/feed/",
@@ -124,11 +125,13 @@ Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
 
     return json.loads(text)
 
-# ── 4. Generate image with Gemini ─────────────────────────────────────────────
+# ── 4. Generate image with Gemini (nouveau SDK google-genai) ──────────────────
 def generate_image_gemini(prompt_text, lang):
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
+        from google import genai
+        from google.genai import types as gtypes
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
 
         full_prompt = (
             f"Create a modern minimalist tech illustration for LinkedIn. "
@@ -137,31 +140,35 @@ def generate_image_gemini(prompt_text, lang):
             f"Concept: {prompt_text}"
         )
 
-        # Tentative 1 : Imagen 3
+        # Tentative 1 : Imagen 3 (via nouveau SDK)
         try:
-            model = genai.ImageGenerationModel("imagen-3.0-generate-001")
-            result = model.generate_images(
+            response = client.models.generate_images(
+                model="imagen-3.0-generate-001",
                 prompt=full_prompt,
-                number_of_images=1,
-                aspect_ratio="1:1",
+                config=gtypes.GenerateImagesConfig(
+                    number_of_images=1,
+                    aspect_ratio="1:1",
+                ),
             )
-            if result.images:
-                return result.images[0]._image_bytes
+            if response.generated_images:
+                img_bytes = response.generated_images[0].image.image_bytes
+                if img_bytes:
+                    return img_bytes
         except Exception as e1:
             print(f"    Imagen 3 échec: {e1}")
 
-        # Tentative 2 : Gemini 2.0 Flash avec output image
+        # Tentative 2 : Gemini 2.0 Flash avec output image (nouveau SDK)
         try:
-            import google.generativeai.types as gtypes
-            model = genai.GenerativeModel("gemini-2.0-flash-exp")
-            response = model.generate_content(
-                full_prompt,
-                generation_config={"response_mime_type": "image/png"}
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=full_prompt,
+                config=gtypes.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                ),
             )
             for part in response.candidates[0].content.parts:
-                if hasattr(part, 'inline_data') and part.inline_data:
-                    import base64
-                    return base64.b64decode(part.inline_data.data)
+                if part.inline_data is not None:
+                    return part.inline_data.data  # déjà en bytes
         except Exception as e2:
             print(f"    Gemini Flash image échec: {e2}")
 
