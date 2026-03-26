@@ -5,6 +5,7 @@ Génère, valide via Telegram, publie sur LinkedIn en FR/ES/IT
 """
 
 import os
+import re
 import json
 import time
 import base64
@@ -23,6 +24,27 @@ TELEGRAM_CHAT_ID      = os.environ["TELEGRAM_CHAT_ID"]
 LINKEDIN_ACCESS_TOKEN = os.environ["LINKEDIN_ACCESS_TOKEN"]
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+
+
+# ============================================================
+# UTILITAIRE — Parser le JSON même entouré de markdown
+# ============================================================
+def parse_json(text):
+    """Extrait du JSON proprement même si Claude l'entoure de ```json ... ```"""
+    # Tentative directe
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    # Bloc markdown ```json ... ```
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if match:
+        return json.loads(match.group(1))
+    # JSON brut quelque part dans le texte
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        return json.loads(match.group(0))
+    raise ValueError(f"Impossible d'extraire du JSON depuis : {text[:200]}")
 
 
 # ============================================================
@@ -91,7 +113,7 @@ Retourne UNIQUEMENT ce JSON valide, rien d'autre :
         messages=[{"role": "user", "content": prompt}]
     )
 
-    result = json.loads(response.content[0].text)
+    result = parse_json(response.content[0].text)
     best = articles[result["best_index"] - 1]
     print(f"✅ Meilleure news ({result['score']}/10) : {best['title']}")
     return best, result
@@ -140,7 +162,7 @@ Retourne UNIQUEMENT ce JSON valide :
         messages=[{"role": "user", "content": prompt}]
     )
 
-    content = json.loads(response.content[0].text)
+    content = parse_json(response.content[0].text)
     print("✅ Posts générés en FR, ES, IT")
     return content
 
