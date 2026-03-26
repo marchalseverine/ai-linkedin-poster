@@ -78,8 +78,8 @@ L'index doit être entre 0 et {len(articles)-1}."""
 def generate_posts(article):
     client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
-    prompt = f"""Tu es Sévi Marchal, Product Operations Manager, experte en IA, basée à Valence (Espagne).
-Tu crées des posts LinkedIn de vulgarisation IA accessibles à tous mais qui montrent une vraie expertise.
+    prompt = f"""Tu es une experte en IA qui écrit des posts LinkedIn de vulgarisation pour un public mixte (tech + non-tech).
+Les posts doivent sonner naturels et humains, PAS comme un texte généré par une IA.
 
 Article source :
 Titre : {article['title']}
@@ -87,20 +87,23 @@ Résumé : {article['summary']}
 URL : {article['url']}
 
 Génère 3 posts LinkedIn adaptés culturellement (PAS une traduction littérale) :
-- EN : Anglais, audience internationale, ton professionnel mais accessible
-- FR : Français, ton direct et personnel, réseau francophone de Sévi
+- EN : Anglais, audience internationale, ton conversationnel et direct
+- FR : Français, ton direct et personnel, style proche d'un post humain
 - ES : Espagnol, "tú" naturel, réseau Valencia/Madrid
 
-Format de chaque post :
-- Hook percutant sur 1-2 lignes
-- 5-7 lignes de corps (vulgarisation + expertise)
-- 1 question finale pour engager
-- Signature : "Sévi"
-- 2-3 hashtags max (ex: #AI #Tech)
+Règles strictes d'écriture :
+- PAS de tiret long (—) ni de tiret moyen (–), utilise des virgules ou des points à la place
+- PAS de formulations trop polies ou corporate
+- PAS de signature, PAS de nom en fin de post
 - PAS de liens dans le post (source ajoutée en commentaire automatiquement)
+- Phrases courtes et directes, style naturel comme un vrai post humain
+- Hook percutant sur 1-2 lignes (pas de "Voici" ou "Découvrez")
+- 5-7 lignes de corps (vulgarisation + point de vue personnel)
+- 1 question finale pour engager les commentaires
+- 2-3 hashtags max en fin de post (ex: #AI #Tech)
 
-Génère aussi 1 prompt de génération d'image par langue, adapté culturellement.
-Style image : fond sombre #1A1A1A, typographie blanche bold, accent corail #FF6B6B, minimaliste, professionnel.
+Génère aussi 1 prompt de génération d'image par langue (description visuelle uniquement, pas de texte dans l'image).
+Style image : fond sombre, tons corail et blanc, minimaliste, tech, professionnel LinkedIn.
 
 Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
 {{
@@ -123,60 +126,75 @@ Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
     text = response.content[0].text.strip()
     text = re.sub(r'```(?:json)?\s*', '', text).strip('`').strip()
 
-    return json.loads(text)
+    result = json.loads(text)
 
-# ── 4. Generate image with Gemini (nouveau SDK google-genai) ──────────────────
-def generate_image_gemini(prompt_text, lang):
+    # Nettoyage : supprime les caractères trop "AI" dans chaque post
+    for lang in ['en', 'fr', 'es']:
+        if lang in result:
+            result[lang] = clean_post_text(result[lang])
+
+    return result
+
+# ── 3b. Clean AI-typical characters ──────────────────────────────────────────
+def clean_post_text(text):
+    """Supprime les caractères typiquement IA et humanise le texte."""
+    # Em-dash et en-dash → virgule ou point selon contexte
+    text = text.replace(' — ', ', ')
+    text = text.replace('—', ', ')
+    text = text.replace(' – ', ', ')
+    text = text.replace('–', '-')
+    # Guillemets typographiques → guillemets droits (plus naturels en post)
+    text = text.replace('\u201c', '"').replace('\u201d', '"')
+    text = text.replace('\u2018', "'").replace('\u2019', "'")
+    # Ellipses fancy → simple
+    text = text.replace('\u2026', '...')
+    return text.strip()
+
+# ── 4. Generate image ─────────────────────────────────────────────────────────
+def generate_image(prompt_text, lang):
+    import urllib.parse
+
+    full_prompt = (
+        "modern minimalist tech illustration, dark background #1A1A1A, "
+        "coral red accent color, white geometric shapes, professional LinkedIn visual, "
+        "no text in image, clean abstract design, 4k quality, "
+        f"{prompt_text}"
+    )
+
+    # Tentative 1 : Pollinations.ai — 100% gratuit, sans clé API
+    try:
+        encoded = urllib.parse.quote(full_prompt)
+        seed = abs(hash(lang + prompt_text[:50])) % 99999
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={seed}"
+        resp = requests.get(url, timeout=90)
+        if resp.status_code == 200 and len(resp.content) > 5000:
+            print(f"    ✅ Image générée via Pollinations.ai ({len(resp.content)//1024}KB)")
+            return resp.content
+        else:
+            print(f"    Pollinations: status {resp.status_code}, taille {len(resp.content)}")
+    except Exception as e:
+        print(f"    Pollinations échec: {e}")
+
+    # Tentative 2 : Gemini Imagen 3 (nécessite billing activé sur Google Cloud)
     try:
         from google import genai
         from google.genai import types as gtypes
-
         client = genai.Client(api_key=GEMINI_API_KEY)
-
-        full_prompt = (
-            f"Create a modern minimalist tech illustration for LinkedIn. "
-            f"Dark background (#1A1A1A), white bold typography, coral accent (#FF6B6B). "
-            f"Clean, professional, social media optimized. No text in the image. "
-            f"Concept: {prompt_text}"
+        response = client.models.generate_images(
+            model="imagen-3.0-generate-001",
+            prompt=full_prompt,
+            config=gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1"),
         )
-
-        # Tentative 1 : Imagen 3 (via nouveau SDK)
-        try:
-            response = client.models.generate_images(
-                model="imagen-3.0-generate-001",
-                prompt=full_prompt,
-                config=gtypes.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="1:1",
-                ),
-            )
-            if response.generated_images:
-                img_bytes = response.generated_images[0].image.image_bytes
-                if img_bytes:
-                    return img_bytes
-        except Exception as e1:
-            print(f"    Imagen 3 échec: {e1}")
-
-        # Tentative 2 : Gemini 2.0 Flash avec output image (nouveau SDK)
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=full_prompt,
-                config=gtypes.GenerateContentConfig(
-                    response_modalities=["IMAGE", "TEXT"],
-                ),
-            )
-            for part in response.candidates[0].content.parts:
-                if part.inline_data is not None:
-                    return part.inline_data.data  # déjà en bytes
-        except Exception as e2:
-            print(f"    Gemini Flash image échec: {e2}")
-
-        return None
-
+        if response.generated_images:
+            img_bytes = response.generated_images[0].image.image_bytes
+            if img_bytes:
+                print(f"    ✅ Image générée via Imagen 3")
+                return img_bytes
     except Exception as e:
-        print(f"    Erreur génération image: {e}")
-        return None
+        print(f"    Imagen 3 échec: {e}")
+
+    print(f"    ⚠️  Aucune image générée pour {lang.upper()}")
+    return None
 
 # ── 5. Send Telegram preview (images + textes + boutons) ──────────────────────
 def send_telegram_preview(posts, article, images, score):
@@ -452,7 +470,7 @@ def main():
 
     for lang in ['en', 'fr', 'es']:
         prompt = image_prompts.get(lang, f"Modern AI technology concept for {lang} audience")
-        img = generate_image_gemini(prompt, lang)
+        img = generate_image(prompt, lang)
         if img:
             images[lang] = img
             print(f"  ✅ Image {lang.upper()} générée ({len(img)} bytes)")
