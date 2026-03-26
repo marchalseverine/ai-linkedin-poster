@@ -182,23 +182,42 @@ def generate_images(content):
             "no photos, no gradients, square 1:1 format, professional LinkedIn visual."
         )
 
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key={GEMINI_API_KEY}",
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}
-            }
-        )
+        # Essayer Imagen 3 d'abord, fallback sur gemini-2.0-flash
+        image_data = None
+        for model in ["imagen-3.0-generate-002", "gemini-2.0-flash-exp-image-generation"]:
+            try:
+                if model == "imagen-3.0-generate-002":
+                    resp = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:predict?key={GEMINI_API_KEY}",
+                        json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}}
+                    )
+                    data = resp.json()
+                    if "predictions" in data and data["predictions"]:
+                        image_data = data["predictions"][0].get("bytesBase64Encoded")
+                else:
+                    resp = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}",
+                        json={
+                            "contents": [{"parts": [{"text": prompt}]}],
+                            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}
+                        }
+                    )
+                    data = resp.json()
+                    for part in data.get("candidates", [{}])[0].get("content", {}).get("parts", []):
+                        if "inlineData" in part:
+                            image_data = part["inlineData"]["data"]
+                            break
 
-        data = response.json()
-        try:
-            for part in data["candidates"][0]["content"]["parts"]:
-                if "inlineData" in part:
-                    images[lang] = part["inlineData"]["data"]  # base64
-                    print(f"  ✅ Image {lang.upper()} générée")
+                if image_data:
+                    images[lang] = image_data
+                    print(f"  ✅ Image {lang.upper()} générée via {model}")
                     break
-        except Exception as e:
-            print(f"  ⚠️  Image {lang.upper()} échouée: {e} — on continue sans image")
+            except Exception as e:
+                print(f"  ⚠️  {model} échoué pour {lang.upper()}: {e}")
+                continue
+
+        if not image_data:
+            print(f"  ⚠️  Image {lang.upper()} ignorée — post publié sans image")
             images[lang] = None
 
         time.sleep(3)  # Éviter le rate limiting Gemini
@@ -209,25 +228,43 @@ def generate_images(content):
 # ============================================================
 # ÉTAPE 5 — ENVOI SUR TELEGRAM POUR VALIDATION
 # ============================================================
-def send_telegram_preview(news, scoring, content):
+def send_telegram_preview(news, scoring, content, images):
+    import io
     print("📱 Envoi du preview sur Telegram...")
 
-    # Envoyer les images d'abord (une par langue)
     flags = {"fr": "🇫🇷", "es": "🇪🇸", "it": "🇮🇹"}
+    labels = {"fr": "FRANÇAIS", "es": "ESPAÑOL", "it": "ITALIANO"}
 
-    message = (
+    # — Étape 1 : envoyer les images avec le texte du post en caption
+    for lang in ["fr", "es", "it"]:
+        img_data = images.get(lang)
+        if img_data:
+            try:
+                photo_bytes = base64.b64decode(img_data)
+                caption = f"{flags[lang]} *{labels[lang]}*\n\n{content[lang]}"[:1024]
+                requests.post(
+                    f"{TELEGRAM_API}/sendPhoto",
+                    data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption, "parse_mode": "Markdown"},
+                    files={"photo": ("image.png", io.BytesIO(photo_bytes), "image/png")}
+                )
+                print(f"  ✅ Image {lang.upper()} envoyée sur Telegram")
+            except Exception as e:
+                print(f"  ⚠️  Impossible d'envoyer l'image {lang.upper()}: {e}")
+        else:
+            # Pas d'image — envoyer juste le texte du post
+            requests.post(f"{TELEGRAM_API}/sendMessage", json={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": f"{flags[lang]} *{labels[lang]}* _(sans image)_\n\n{content[lang]}",
+                "parse_mode": "Markdown",
+            })
+
+    # — Étape 2 : envoyer le message de validation avec boutons
+    summary = (
         f"🤖 *AI News du {datetime.now().strftime('%d/%m/%Y')}*\n\n"
-        f"📰 *News sélectionnée — {scoring['score']}/10*\n"
-        f"_{news['title']}_\n"
-        f"_{scoring['raison']}_\n\n"
-        f"---\n\n"
-        f"🇫🇷 *FRANÇAIS*\n{content['fr']}\n\n"
-        f"---\n\n"
-        f"🇪🇸 *ESPAÑOL*\n{content['es']}\n\n"
-        f"---\n\n"
-        f"🇮🇹 *ITALIANO*\n{content['it']}\n\n"
-        f"---\n"
-        f"📎 Source : {news['url']}"
+        f"📰 *{news['title']}*\n"
+        f"_{scoring['raison']}_ — score {scoring['score']}/10\n\n"
+        f"📎 Source : {news['url']}\n\n"
+        f"👇 *Que veux-tu publier ?*"
     )
 
     keyboard = {
@@ -246,7 +283,7 @@ def send_telegram_preview(news, scoring, content):
 
     requests.post(f"{TELEGRAM_API}/sendMessage", json={
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
+        "text": summary,
         "parse_mode": "Markdown",
         "reply_markup": keyboard,
     })
@@ -297,7 +334,11 @@ def get_linkedin_user_id():
         "https://api.linkedin.com/v2/userinfo",
         headers={"Authorization": f"Bearer {LINKEDIN_ACCESS_TOKEN}"}
     )
-    return r.json()["sub"]
+    sub = r.json()["sub"]
+    # sub peut être "urn:li:person:XXXX" ou juste "XXXX" — on normalise
+    if sub.startswith("urn:li:person:"):
+        return sub.replace("urn:li:person:", "")
+    return sub
 
 
 def upload_image_to_linkedin(image_b64, user_id):
@@ -358,7 +399,17 @@ def publish_post(text, image_urn, user_id):
         json=body
     )
 
-    post_id = r.headers.get("x-restli-id") or r.json().get("id")
+    print(f"  LinkedIn status: {r.status_code}")
+    if r.status_code not in [200, 201]:
+        print(f"  ❌ Erreur LinkedIn: {r.text[:300]}")
+        return None
+
+    post_id = r.headers.get("x-restli-id") or r.headers.get("X-RestLi-Id")
+    if not post_id:
+        try:
+            post_id = r.json().get("id")
+        except Exception:
+            pass
     print(f"  ✅ Post publié : {post_id}")
     return post_id
 
@@ -415,7 +466,7 @@ def main():
     images = generate_images(content)
 
     # 5. Telegram
-    send_telegram_preview(news, scoring, content)
+    send_telegram_preview(news, scoring, content, images)
     decision = wait_for_approval(timeout_minutes=60)
 
     # 6. Publication
