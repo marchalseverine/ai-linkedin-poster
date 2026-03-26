@@ -1,0 +1,32 @@
+name: AI LinkedIn Daily Poster
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # Tous les jours à 8h heure de Valencia (UTC+1)
+  workflow_dispatch:        # Bouton "Run workflow" manuel sur GitHub
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90     # 90 min max (60 min d'attente + marge)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run poster
+        env:
+          CLAUDE_API_KEY:        ${{ secrets.CLAUDE_API_KEY }}
+          GEMINI_API_KEY:        ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+          LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+        run: python poster.py
