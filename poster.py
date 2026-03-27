@@ -152,49 +152,133 @@ def clean_post_text(text):
 
 # ── 4. Generate image ─────────────────────────────────────────────────────────
 def generate_image(prompt_text, lang):
-    import urllib.parse
-
     full_prompt = (
-        "modern minimalist tech illustration, dark background #1A1A1A, "
-        "coral red accent color, white geometric shapes, professional LinkedIn visual, "
-        "no text in image, clean abstract design, 4k quality, "
-        f"{prompt_text}"
+        "A modern minimalist tech illustration for LinkedIn. "
+        "Dark background (#1A1A1A), coral red accent color (#FF6B6B), "
+        "white geometric shapes, professional and clean. "
+        "No text, no words, no letters in the image. Abstract concept only. "
+        f"Topic: {prompt_text}"
     )
 
-    # Tentative 1 : Pollinations.ai — 100% gratuit, sans clé API
-    try:
-        encoded = urllib.parse.quote(full_prompt)
-        seed = abs(hash(lang + prompt_text[:50])) % 99999
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={seed}"
-        resp = requests.get(url, timeout=90)
-        if resp.status_code == 200 and len(resp.content) > 5000:
-            print(f"    ✅ Image générée via Pollinations.ai ({len(resp.content)//1024}KB)")
-            return resp.content
-        else:
-            print(f"    Pollinations: status {resp.status_code}, taille {len(resp.content)}")
-    except Exception as e:
-        print(f"    Pollinations échec: {e}")
-
-    # Tentative 2 : Gemini Imagen 3 (nécessite billing activé sur Google Cloud)
+    # Tentative 1 : Gemini gemini-2.0-flash-exp (moteur de Nano Banana)
     try:
         from google import genai
         from google.genai import types as gtypes
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=full_prompt,
+            config=gtypes.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"]
+            )
+        )
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                img_bytes = part.inline_data.data
+                print(f"    ✅ Image Gemini (Nano Banana) générée ({len(img_bytes)//1024}KB)")
+                return img_bytes
+        print("    Gemini : réponse reçue mais pas d'image")
+    except Exception as e:
+        print(f"    Gemini echec: {e}")
+
+    # Tentative 2 : Imagen 3 (nécessite billing Google Cloud)
+    try:
+        from google import genai
+        from google.genai import types as gtypes
+
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_images(
             model="imagen-3.0-generate-001",
             prompt=full_prompt,
-            config=gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1"),
+            config=gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1")
         )
         if response.generated_images:
             img_bytes = response.generated_images[0].image.image_bytes
             if img_bytes:
-                print(f"    ✅ Image générée via Imagen 3")
+                print(f"    ✅ Image Imagen 3 générée ({len(img_bytes)//1024}KB)")
                 return img_bytes
     except Exception as e:
-        print(f"    Imagen 3 échec: {e}")
+        print(f"    Imagen 3 echec: {e}")
 
-    print(f"    ⚠️  Aucune image générée pour {lang.upper()}")
-    return None
+    # Tentative 3 : Génération locale avec Pillow — toujours disponible
+    print(f"    → Fallback Pillow (local)...")
+    return generate_branded_image_local(prompt_text, lang)
+
+
+def generate_branded_image_local(topic_hint, lang):
+    """
+    Génère une image branded minimaliste tech avec Pillow.
+    Fond sombre #1A1A1A, accents corail #FF6B6B, formes géométriques.
+    Aucune API externe — toujours disponible.
+    """
+    import math, random, io
+    from PIL import Image, ImageDraw
+
+    seed = abs(hash(lang + topic_hint[:40]))
+    rng  = random.Random(seed)
+    W, H = 1024, 1024
+    BG    = (26, 26, 26)
+    CORAL = (255, 107, 107)
+
+    img  = Image.new("RGB", (W, H), BG)
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    # Grille subtile en fond
+    for x in range(0, W, 64):
+        draw.line([(x, 0), (x, H)], fill=(45, 45, 45, 255), width=1)
+    for y in range(0, H, 64):
+        draw.line([(0, y), (W, y)], fill=(45, 45, 45, 255), width=1)
+
+    # Cercles concentriques corail (bas-droite)
+    cx, cy = int(W * 0.80), int(H * 0.75)
+    for r in range(360, 0, -55):
+        alpha = max(20, int(15 + (360 - r) * 0.15))
+        draw.ellipse([cx-r, cy-r, cx+r, cy+r],
+                     outline=(255, 107, 107, alpha), width=2)
+
+    # Grand triangle blanc (centre-gauche)
+    tri_cx, tri_cy, tri_r = int(W * 0.32), int(H * 0.42), 180
+    pts = [(tri_cx + tri_r * math.cos(math.pi/2 + 2*math.pi*i/3),
+            tri_cy - tri_r * math.sin(math.pi/2 + 2*math.pi*i/3)) for i in range(3)]
+    draw.polygon(pts, fill=(255, 255, 255, 35), outline=(255, 255, 255, 130))
+
+    # Hexagone corail (haut-droite)
+    hx, hy, hr = int(W * 0.70), int(H * 0.28), 110
+    hpts = [(hx + hr * math.cos(math.pi/6 + math.pi*i/3),
+             hy + hr * math.sin(math.pi/6 + math.pi*i/3)) for i in range(6)]
+    draw.polygon(hpts, fill=(255, 107, 107, 30), outline=(255, 107, 107, 160))
+
+    # Petit carré blanc rotatif (centre)
+    sq_cx, sq_cy, sq_r = int(W * 0.55), int(H * 0.55), 55
+    angle = math.pi / 6
+    sqpts = [(sq_cx + sq_r * math.cos(angle + math.pi/2 * i),
+              sq_cy + sq_r * math.sin(angle + math.pi/2 * i)) for i in range(4)]
+    draw.polygon(sqpts, fill=(255, 255, 255, 25), outline=(255, 255, 255, 110))
+
+    # Lignes diagonales corail
+    for x1, y1, x2, y2 in [(80, 300, 260, 160), (200, 680, 380, 560), (620, 100, 750, 220)]:
+        draw.line([(x1, y1), (x2, y2)], fill=(255, 107, 107, 140), width=2)
+
+    # Points lumineux (constellation)
+    for _ in range(18):
+        px = rng.randint(50, W-50)
+        py = rng.randint(50, H-50)
+        pr = rng.randint(2, 5)
+        alpha = rng.randint(80, 200)
+        color = CORAL if rng.random() > 0.6 else (255, 255, 255)
+        draw.ellipse([px-pr, py-pr, px+pr, py+pr], fill=(*color, alpha))
+
+    # Barre corail en bas + accent top-left
+    draw.rectangle([(0, H-12), (W, H)], fill=CORAL)
+    draw.rectangle([(36, 36), (80, 80)], fill=CORAL)
+    draw.rectangle([(88, 36), (102, 80)], fill=(255, 107, 107, 180))
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    img_bytes = buf.getvalue()
+    print(f"    ✅ Image générée en local ({len(img_bytes)//1024}KB)")
+    return img_bytes
 
 # ── 5. Send Telegram preview (images + textes + boutons) ──────────────────────
 def send_telegram_preview(posts, article, images, score):
