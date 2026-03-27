@@ -180,19 +180,26 @@ Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
     return result
 
 # ── 3b. Clean AI-typical characters ──────────────────────────────────────────
-def clean_post_text(text):
-    """Supprime les caractères typiquement IA et humanise le texte."""
-    # Em-dash et en-dash → virgule ou point selon contexte
-    text = text.replace(' — ', ', ')
-    text = text.replace('—', ', ')
-    text = text.replace(' – ', ', ')
-    text = text.replace('–', '-')
-    # Guillemets typographiques → guillemets droits (plus naturels en post)
-    text = text.replace('\u201c', '"').replace('\u201d', '"')
-    text = text.replace('\u2018', "'").replace('\u2019', "'")
-    # Ellipses fancy → simple
-    text = text.replace('\u2026', '...')
-    return text.strip()
+# Remplacement des lignes 183-195 de poster.py
+if client_g:
+    try:
+        # Utilisation du nom de modèle correct pour Nano Banana 2
+        response = client_g.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=full_prompt,
+            config=gtypes.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                # L'aspect ratio 1:1 est idéal pour LinkedIn
+            )
+        )
+        # Ton code de récupération des bytes est déjà correct
+        for part in response.parts:
+            if part.inline_data is not None:
+                img_bytes = part.inline_data.data
+                print(f"    ✅ Image Nano Banana (gemini-2.0-flash) générée")
+                return img_bytes
+    except Exception as e:
+        print(f"    gemini-2.0-flash échec: {e}")
 
 # ── 4. Generate image ─────────────────────────────────────────────────────────
 def generate_image(prompt_text, lang):
