@@ -213,7 +213,28 @@ def generate_image(prompt_text, lang):
         print("    ❌ google-genai non installé")
         client_g = None
 
-    # Tentative 1 : gemini-2.0-flash-exp-image-generation (modèle dédié image, Google AI Studio)
+    # Tentative 1 : gemini-2.5-flash-image (modèle GA officiel Google AI Studio — "Nano Banana")
+    # Docs : https://ai.google.dev/gemini-api/docs/image-generation
+    if client_g:
+        try:
+            response = client_g.models.generate_content(
+                model="gemini-2.5-flash-image",
+                contents=full_prompt,
+                config=gtypes.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    image_config=gtypes.ImageConfig(aspect_ratio="1:1"),
+                )
+            )
+            for part in response.parts:
+                if part.inline_data is not None:
+                    img_bytes = part.inline_data.data
+                    print(f"    ✅ Image Nano Banana (gemini-2.5-flash-image) générée ({len(img_bytes)//1024}KB)")
+                    return img_bytes
+            print("    gemini-2.5-flash-image : pas d'image dans la réponse")
+        except Exception as e:
+            print(f"    gemini-2.5-flash-image échec: {e}")
+
+    # Tentative 2 : gemini-2.0-flash-exp-image-generation (ancien modèle expérimental)
     if client_g:
         try:
             response = client_g.models.generate_content(
@@ -223,33 +244,14 @@ def generate_image(prompt_text, lang):
                     response_modalities=["IMAGE"]
                 )
             )
-            for part in response.candidates[0].content.parts:
+            for part in response.parts:
                 if part.inline_data is not None:
                     img_bytes = part.inline_data.data
-                    print(f"    ✅ Image Gemini (image-gen) générée ({len(img_bytes)//1024}KB)")
+                    print(f"    ✅ Image Gemini (flash-exp-image-gen) générée ({len(img_bytes)//1024}KB)")
                     return img_bytes
             print("    gemini-2.0-flash-exp-image-generation : pas d'image dans la réponse")
         except Exception as e:
             print(f"    gemini-2.0-flash-exp-image-generation échec: {e}")
-
-    # Tentative 2 : gemini-2.0-flash-exp (modèle multimodal classique)
-    if client_g:
-        try:
-            response = client_g.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=full_prompt,
-                config=gtypes.GenerateContentConfig(
-                    response_modalities=["IMAGE", "TEXT"]
-                )
-            )
-            for part in response.candidates[0].content.parts:
-                if part.inline_data is not None:
-                    img_bytes = part.inline_data.data
-                    print(f"    ✅ Image Gemini (flash-exp) générée ({len(img_bytes)//1024}KB)")
-                    return img_bytes
-            print("    gemini-2.0-flash-exp : pas d'image dans la réponse")
-        except Exception as e:
-            print(f"    gemini-2.0-flash-exp échec: {e}")
 
     # Tentative 3 : Imagen 3 (nécessite billing Google Cloud)
     if client_g:
