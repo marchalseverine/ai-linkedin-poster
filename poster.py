@@ -102,8 +102,14 @@ Règles strictes d'écriture :
 - 1 question finale pour engager les commentaires
 - 2-3 hashtags max en fin de post (ex: #AI #Tech)
 
-Génère aussi 1 prompt de génération d'image par langue (description visuelle uniquement, pas de texte dans l'image).
-Style image : fond sombre, tons corail et blanc, minimaliste, tech, professionnel LinkedIn.
+Génère aussi 1 prompt d'image par langue. Le prompt doit décrire une scène visuelle DIRECTEMENT liée au sujet de l'article.
+Règles pour les prompts image :
+- Décris une scène concrète et spécifique au sujet (ex : si l'article parle de Siri et d'IA, décris "a sleek smartphone held in hand, glowing AI voice interface on screen, soft studio lighting, cinematic")
+- Style : photorealistic, cinematic lighting, professional tech photography, dark moody atmosphere
+- Adapte légèrement au marché : EN = épuré international, FR = élégant, ES = chaleureux
+- PAS de texte, PAS de logos dans l'image
+- Le prompt doit être en anglais (meilleur résultat avec Gemini)
+- Minimum 2 phrases descriptives, très précises
 
 Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
 {{
@@ -111,9 +117,9 @@ Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
   "fr": "texte complet du post en français",
   "es": "texte complet du post en espagnol",
   "image_prompts": {{
-    "en": "image generation prompt for English/international audience",
-    "fr": "image generation prompt for French audience",
-    "es": "image generation prompt for Spanish audience"
+    "en": "detailed photorealistic scene directly related to the article topic, international style, cinematic lighting, no text",
+    "fr": "detailed photorealistic scene directly related to the article topic, elegant French style, cinematic lighting, no text",
+    "es": "detailed photorealistic scene directly related to the article topic, warm Mediterranean style, cinematic lighting, no text"
   }}
 }}"""
 
@@ -152,15 +158,16 @@ def clean_post_text(text):
 
 # ── 4. Generate image ─────────────────────────────────────────────────────────
 def generate_image(prompt_text, lang):
+    # Le sujet spécifique passe EN PREMIER — c'est ce que Gemini/Nano Banana lit en priorité
+    # Le style vient en complément, pas en remplacement
     full_prompt = (
-        "A modern minimalist tech illustration for LinkedIn. "
-        "Dark background (#1A1A1A), coral red accent color (#FF6B6B), "
-        "white geometric shapes, professional and clean. "
-        "No text, no words, no letters in the image. Abstract concept only. "
-        f"Topic: {prompt_text}"
+        f"{prompt_text}. "
+        "Photorealistic, cinematic lighting, professional tech photography. "
+        "High quality, sharp focus, dramatic atmosphere. "
+        "No text, no words, no letters, no logos anywhere in the image."
     )
 
-    # Tentative 1 : Gemini gemini-2.0-flash-exp (moteur de Nano Banana)
+    # Tentative 1 : Gemini gemini-2.0-flash-exp (moteur exact de Nano Banana)
     try:
         from google import genai
         from google.genai import types as gtypes
