@@ -41,6 +41,45 @@ def fetch_news():
             print(f"  Feed error ({feed_url}): {e}")
     return articles[:15]
 
+# ── Safe JSON parser ──────────────────────────────────────────────────────────
+def safe_json_parse(text):
+    """
+    Parse JSON robustement avec 3 stratégies de fallback.
+    Gère les cas où Claude met de vrais sauts de ligne dans les valeurs JSON.
+    """
+    # Nettoyage initial : retire les balises markdown
+    text = re.sub(r'```(?:json)?\s*', '', text).strip('`').strip()
+
+    # Stratégie 1 : parse direct
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Stratégie 2 : extraire le bloc JSON avec regex (ignore le texte autour)
+    match = re.search(r'\{[\s\S]*\}', text)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    # Stratégie 3 : remplacer les vrais sauts de ligne DANS les strings JSON
+    # On remplace les \n qui ne sont pas déjà échappés
+    try:
+        # Trouve les strings JSON et remplace les vraies newlines à l'intérieur
+        def fix_string_newlines(m):
+            return m.group(0).replace('\n', '\\n').replace('\r', '\\r')
+
+        # Regex pour capturer les valeurs string dans le JSON
+        fixed = re.sub(r'"((?:[^"\\]|\\.)*)"', fix_string_newlines, text)
+        return json.loads(fixed)
+    except (json.JSONDecodeError, re.error):
+        pass
+
+    raise ValueError(f"Impossible de parser le JSON après 3 tentatives. Début: {text[:300]}")
+
+
 # ── 2. Score & select best news ───────────────────────────────────────────────
 def score_news(articles):
     client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
@@ -68,10 +107,7 @@ L'index doit être entre 0 et {len(articles)-1}."""
     )
 
     text = response.content[0].text.strip()
-    # Nettoie les balises markdown si Claude en ajoute
-    text = re.sub(r'```(?:json)?\s*', '', text).strip('`').strip()
-
-    result = json.loads(text)
+    result = safe_json_parse(text)
     return articles[result['index']], result['score']
 
 # ── 3. Generate posts EN / FR / ES ────────────────────────────────────────────
@@ -111,6 +147,10 @@ Règles pour les prompts image :
 - Le prompt doit être en anglais (meilleur résultat avec Gemini)
 - Minimum 2 phrases descriptives, très précises
 
+RÈGLE JSON CRITIQUE : dans les valeurs JSON, représente TOUS les sauts de ligne avec \\n (backslash-n).
+Ne mets JAMAIS de vrais retours à la ligne (touche Entrée) à l'intérieur d'une valeur string JSON.
+Le JSON doit être sur une seule ligne compacte ou avec des sauts de ligne UNIQUEMENT entre les clés de premier niveau.
+
 Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
 {{
   "en": "texte complet du post en anglais",
@@ -125,14 +165,12 @@ Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
 
     response = client.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=2500,
+        max_tokens=4096,
         messages=[{"role": "user", "content": prompt}]
     )
 
     text = response.content[0].text.strip()
-    text = re.sub(r'```(?:json)?\s*', '', text).strip('`').strip()
-
-    result = json.loads(text)
+    result = safe_json_parse(text)
 
     # Nettoyage : supprime les caractères trop "AI" dans chaque post
     for lang in ['en', 'fr', 'es']:
@@ -167,48 +205,69 @@ def generate_image(prompt_text, lang):
         "No text, no words, no letters, no logos anywhere in the image."
     )
 
-    # Tentative 1 : Gemini gemini-2.0-flash-exp (moteur exact de Nano Banana)
     try:
         from google import genai
         from google.genai import types as gtypes
+        client_g = genai.Client(api_key=GEMINI_API_KEY)
+    except ImportError:
+        print("    ❌ google-genai non installé")
+        client_g = None
 
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
-            contents=full_prompt,
-            config=gtypes.GenerateContentConfig(
-                response_modalities=["IMAGE", "TEXT"]
+    # Tentative 1 : gemini-2.0-flash-exp-image-generation (modèle dédié image, Google AI Studio)
+    if client_g:
+        try:
+            response = client_g.models.generate_content(
+                model="gemini-2.0-flash-exp-image-generation",
+                contents=full_prompt,
+                config=gtypes.GenerateContentConfig(
+                    response_modalities=["IMAGE"]
+                )
             )
-        )
-        for part in response.candidates[0].content.parts:
-            if part.inline_data is not None:
-                img_bytes = part.inline_data.data
-                print(f"    ✅ Image Gemini (Nano Banana) générée ({len(img_bytes)//1024}KB)")
-                return img_bytes
-        print("    Gemini : réponse reçue mais pas d'image")
-    except Exception as e:
-        print(f"    Gemini echec: {e}")
+            for part in response.candidates[0].content.parts:
+                if part.inline_data is not None:
+                    img_bytes = part.inline_data.data
+                    print(f"    ✅ Image Gemini (image-gen) générée ({len(img_bytes)//1024}KB)")
+                    return img_bytes
+            print("    gemini-2.0-flash-exp-image-generation : pas d'image dans la réponse")
+        except Exception as e:
+            print(f"    gemini-2.0-flash-exp-image-generation échec: {e}")
 
-    # Tentative 2 : Imagen 3 (nécessite billing Google Cloud)
-    try:
-        from google import genai
-        from google.genai import types as gtypes
+    # Tentative 2 : gemini-2.0-flash-exp (modèle multimodal classique)
+    if client_g:
+        try:
+            response = client_g.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=full_prompt,
+                config=gtypes.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"]
+                )
+            )
+            for part in response.candidates[0].content.parts:
+                if part.inline_data is not None:
+                    img_bytes = part.inline_data.data
+                    print(f"    ✅ Image Gemini (flash-exp) générée ({len(img_bytes)//1024}KB)")
+                    return img_bytes
+            print("    gemini-2.0-flash-exp : pas d'image dans la réponse")
+        except Exception as e:
+            print(f"    gemini-2.0-flash-exp échec: {e}")
 
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_images(
-            model="imagen-3.0-generate-001",
-            prompt=full_prompt,
-            config=gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1")
-        )
-        if response.generated_images:
-            img_bytes = response.generated_images[0].image.image_bytes
-            if img_bytes:
-                print(f"    ✅ Image Imagen 3 générée ({len(img_bytes)//1024}KB)")
-                return img_bytes
-    except Exception as e:
-        print(f"    Imagen 3 echec: {e}")
+    # Tentative 3 : Imagen 3 (nécessite billing Google Cloud)
+    if client_g:
+        try:
+            response = client_g.models.generate_images(
+                model="imagen-3.0-generate-001",
+                prompt=full_prompt,
+                config=gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1")
+            )
+            if response.generated_images:
+                img_bytes = response.generated_images[0].image.image_bytes
+                if img_bytes:
+                    print(f"    ✅ Image Imagen 3 générée ({len(img_bytes)//1024}KB)")
+                    return img_bytes
+        except Exception as e:
+            print(f"    Imagen 3 échec: {e}")
 
-    # Tentative 3 : Génération locale avec Pillow — toujours disponible
+    # Fallback final : Génération locale avec Pillow — toujours disponible
     print(f"    → Fallback Pillow (local)...")
     return generate_branded_image_local(prompt_text, lang)
 
