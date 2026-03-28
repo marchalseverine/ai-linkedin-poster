@@ -1,0 +1,97 @@
+name: Telegram Run Listener
+
+on:
+  schedule:
+    # Every 10 min, 6h-21h UTC (= 7h-22h Valencia)
+    - cron: "*/10 6-21 * * *"
+  workflow_dispatch:
+
+jobs:
+  listen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+
+    steps:
+      - name: Check for run command and trigger poster
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY:  ${{ github.repository }}
+        run: |
+          python3 << 'PYEOF'
+          import os, time, requests
+
+          TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
+          CHAT_ID = str(os.environ['TELEGRAM_CHAT_ID'])
+          GH_TOKEN = os.environ['GITHUB_TOKEN']
+          REPO = os.environ['GITHUB_REPOSITORY']
+
+          # Accept "run" messages from the last 12 minutes
+          cutoff = int(time.time()) - 720
+
+          resp = requests.get(
+              f"https://api.telegram.org/bot{TOKEN}/getUpdates",
+              params={'limit': 30, 'allowed_updates': ['message']},
+              timeout=10
+          )
+          updates = resp.json().get('result', [])
+
+          for update in updates:
+              if 'message' not in update:
+                  continue
+              msg = update['message']
+              if msg.get('date', 0) < cutoff:
+                  continue
+              if str(msg.get('chat', {}).get('id', '')) != CHAT_ID:
+                  continue
+              text = msg.get('text', '').strip().lower()
+              if text not in ('run', '/run'):
+                  continue
+
+              # Don't trigger if a poster run is already in progress
+              check = requests.get(
+                  f"https://api.github.com/repos/{REPO}/actions/runs",
+                  headers={
+                      'Authorization': f'Bearer {GH_TOKEN}',
+                      'Accept': 'application/vnd.github+json',
+                  },
+                  params={'status': 'in_progress'},
+                  timeout=10
+              )
+              active = [
+                  r for r in check.json().get('workflow_runs', [])
+                  if 'poster' in r.get('name', '').lower() or 'daily' in r.get('name', '').lower()
+              ]
+              if active:
+                  print("⚠️  Poster déjà en cours, skip")
+                  break
+
+              # Trigger daily.yml
+              trigger = requests.post(
+                  f"https://api.github.com/repos/{REPO}/actions/workflows/daily.yml/dispatches",
+                  headers={
+                      'Authorization': f'Bearer {GH_TOKEN}',
+                      'Accept': 'application/vnd.github+json',
+                  },
+                  json={'ref': 'main'},
+                  timeout=10
+              )
+
+              if trigger.status_code == 204:
+                  requests.post(
+                      f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                      json={
+                          'chat_id': CHAT_ID,
+                          'text': '🚀 Run lancé ! Tu recevras les articles dans quelques instants.'
+                      },
+                      timeout=10
+                  )
+                  print("✅ Workflow triggered")
+              else:
+                  print(f"❌ Trigger failed ({trigger.status_code}): {trigger.text}")
+              break
+
+          PYEOF
