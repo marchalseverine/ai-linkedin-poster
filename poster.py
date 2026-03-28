@@ -242,26 +242,35 @@ def generate_image(prompt_text, lang):
     ]
 
     for model_name in flash_models:
-        try:
-            print(f"  🎨 Tentative {model_name} pour {lang}...")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=full_prompt,
-                config=gtypes.GenerateContentConfig(
-                    response_modalities=["IMAGE", "TEXT"]
+        for retry in range(3):
+            try:
+                print(f"  🎨 {model_name} [{lang}] (essai {retry + 1})...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=full_prompt,
+                    config=gtypes.GenerateContentConfig(
+                        response_modalities=["IMAGE", "TEXT"]
+                    )
                 )
-            )
-            if not response.candidates or not response.candidates[0].content.parts:
-                print(f"    {model_name} : réponse vide")
-                continue
-            for part in response.candidates[0].content.parts:
-                if part.inline_data is not None:
-                    img_bytes = part.inline_data.data
-                    print(f"    ✅ Image ({model_name}) générée ({len(img_bytes) // 1024}KB)")
-                    return img_bytes
-            print(f"    {model_name} : pas d'image dans les parts")
-        except Exception as e:
-            print(f"    {model_name} échec: {e}")
+                if not response.candidates or not response.candidates[0].content.parts:
+                    print(f"    {model_name} : réponse vide")
+                    break
+                for part in response.candidates[0].content.parts:
+                    if part.inline_data is not None:
+                        img_bytes = part.inline_data.data
+                        print(f"    ✅ Image ({model_name}) générée ({len(img_bytes) // 1024}KB)")
+                        return img_bytes
+                print(f"    {model_name} : pas d'image dans les parts")
+                break
+            except Exception as e:
+                err = str(e)
+                if '429' in err or 'quota' in err.lower() or 'rate' in err.lower():
+                    wait = 20 * (retry + 1)
+                    print(f"    Rate limit — retry dans {wait}s...")
+                    time.sleep(wait)
+                else:
+                    print(f"    {model_name} échec: {e}")
+                    break
 
     try:
         print(f"  🎨 Tentative imagen-4.0-generate-001 pour {lang}...")
@@ -287,7 +296,7 @@ def generate_images_for_posts(posts):
     image_prompts = posts.get('image_prompts', {})
     for i, lang in enumerate(['en', 'fr', 'es']):
         if i > 0:
-            time.sleep(3)
+            time.sleep(10)
         prompt = image_prompts.get(lang, f"Modern AI technology concept for {lang} audience")
         img = generate_image(prompt, lang)
         images[lang] = img
