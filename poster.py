@@ -72,12 +72,21 @@ L'index doit être entre 0 et {len(articles)-1}."""
     return articles[result['index']], result['score']
 
 # ── 3. Generate posts EN / FR / ES ────────────────────────────────────────────
-def generate_posts(article):
+def generate_posts(article, attempt=1):
     client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+
+    alternate_instruction = ""
+    if attempt > 1:
+        alternate_instruction = (
+            "\nIMPORTANT : Génère une VERSION COMPLÈTEMENT DIFFÉRENTE. "
+            "Change l'angle, le hook, le ton et la structure par rapport à une version classique. "
+            "Sois créative et surprenante.\n"
+        )
 
     prompt = f"""Tu es une experte en IA qui écrit des posts LinkedIn de vulgarisation pour un public mixte (tech + non-tech).
 Les posts doivent sonner naturels et humains, PAS comme un texte généré par une IA.
-
+IMPORTANT : L'auteure est une femme (Sévi). Utilise les accords féminins en français et en espagnol (ex : convaincue, prête, experte, enthousiaste, etc.).
+{alternate_instruction}
 Article source :
 Titre : {article['title']}
 Résumé : {article['summary']}
@@ -251,8 +260,14 @@ def send_telegram_preview(posts, article, images, score):
             ],
             [
                 {"text": "🌍 TOUT publier", "callback_data": "publish_all"},
+            ],
+            [
+                {"text": "🔄 Autre version", "callback_data": "regenerate"},
+                {"text": "🎲 Autre sujet", "callback_data": "new_topic"},
+            ],
+            [
                 {"text": "❌ Ignorer", "callback_data": "ignore"},
-            ]
+            ],
         ]
     }
 
@@ -446,6 +461,37 @@ def notify_telegram(message):
         json={'chat_id': TELEGRAM_CHAT_ID, 'text': message}
     )
 
+
+def save_history(article, decision, langs):
+    import subprocess
+    history_file = "history.json"
+    try:
+        with open(history_file, 'r', encoding='utf-8') as f:
+            history = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        history = []
+
+    history.append({
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "title": article['title'],
+        "url": article['url'],
+        "decision": decision,
+        "langs": langs,
+    })
+
+    with open(history_file, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
+
+    try:
+        subprocess.run(["git", "config", "user.email", "action@github.com"], check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "GitHub Action"], check=True, capture_output=True)
+        subprocess.run(["git", "add", history_file], check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", f"history: {decision} — {article['title'][:60]}"], check=True, capture_output=True)
+        subprocess.run(["git", "push"], check=True, capture_output=True)
+        print("  ✅ Historique sauvegardé")
+    except Exception as e:
+        print(f"  ⚠️ Historique non commité: {e}")
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     print("=" * 50)
@@ -460,80 +506,111 @@ def main():
     best_article, score = score_news(articles)
     print(f"✅ Meilleure news ({score}/10) : {best_article['title']}")
 
-    print("✍️  Génération des posts LinkedIn en EN/FR/ES...")
-    posts = generate_posts(best_article)
-    print("✅ Posts générés en EN, FR, ES")
+    if score < 7:
+        notify_telegram(f"⚠️ Aucune news suffisamment pertinente aujourd'hui (score max : {score}/10).")
+        print("⚠️ Score trop bas — pipeline arrêté.")
+        return
 
-    print("🎨 Génération des images avec Gemini...")
-    images = {}
-    image_prompts = posts.get('image_prompts', {})
+    used_urls = [best_article['url']]
+    attempt = 1
 
-    for lang in ['en', 'fr', 'es']:
-        prompt = image_prompts.get(lang, f"Modern AI technology concept for {lang} audience")
-        img = generate_image(prompt, lang)
-        if img:
+    while True:
+        print(f"✍️  Génération des posts LinkedIn (tentative {attempt})...")
+        posts = generate_posts(best_article, attempt)
+        print("✅ Posts générés en EN, FR, ES")
+
+        print("🎨 Génération des images avec Gemini...")
+        images = {}
+        image_prompts = posts.get('image_prompts', {})
+        for lang in ['en', 'fr', 'es']:
+            prompt = image_prompts.get(lang, f"Modern AI technology concept for {lang} audience")
+            img = generate_image(prompt, lang)
             images[lang] = img
-            print(f"  ✅ Image {lang.upper()} générée ({len(img)} bytes)")
+            if img:
+                print(f"  ✅ Image {lang.upper()} générée ({len(img)} bytes)")
+            else:
+                print(f"  ⚠️  Image {lang.upper()} ignorée — post publié sans image")
+
+        print("📱 Envoi du preview sur Telegram...")
+        send_telegram_preview(posts, best_article, images, score)
+        print("✅ Preview envoyé sur Telegram — en attente de ta validation...")
+
+        decision = wait_for_validation()
+        print(f"✅ Décision reçue : {decision}")
+
+        if decision == 'ignore':
+            save_history(best_article, 'ignored', [])
+            notify_telegram("❌ Post ignoré pour aujourd'hui.")
+            print("❌ Post ignoré.")
+            return
+
+        elif decision == 'regenerate':
+            attempt += 1
+            notify_telegram(f"🔄 Génération d'une nouvelle version (tentative {attempt})...")
+            print(f"🔄 Nouvelle version demandée (tentative {attempt})")
+            continue
+
+        elif decision == 'new_topic':
+            remaining = [a for a in articles if a['url'] not in used_urls]
+            if not remaining:
+                notify_telegram("❌ Plus d'articles disponibles pour aujourd'hui.")
+                print("❌ Plus d'articles disponibles.")
+                return
+            print("🧠 Sélection d'un nouvel article...")
+            best_article, score = score_news(remaining)
+            used_urls.append(best_article['url'])
+            attempt = 1
+            notify_telegram(f"🎲 Nouvel article sélectionné : {best_article['title']}")
+            print(f"🎲 Nouvel article ({score}/10) : {best_article['title']}")
+            continue
+
+        # Publication
+        if decision == 'publish_all':
+            langs_to_publish = ['en', 'fr', 'es']
+        elif decision == 'publish_en':
+            langs_to_publish = ['en']
+        elif decision == 'publish_fr':
+            langs_to_publish = ['fr']
+        elif decision == 'publish_es':
+            langs_to_publish = ['es']
         else:
-            images[lang] = None
-            print(f"  ⚠️  Image {lang.upper()} ignorée — post publié sans image")
+            langs_to_publish = []
 
-    print("📱 Envoi du preview sur Telegram...")
-    send_telegram_preview(posts, best_article, images, score)
-    print("✅ Preview envoyé sur Telegram — en attente de ta validation...")
+        if not langs_to_publish:
+            print("Aucune langue à publier.")
+            return
 
-    decision = wait_for_validation()
-    print(f"✅ Décision reçue : {decision}")
+        print("🔑 Identification du compte LinkedIn...")
+        author_urn = get_linkedin_urn()
+        if not author_urn:
+            notify_telegram("❌ Erreur : impossible de récupérer ton profil LinkedIn. Vérifie le token.")
+            return
 
-    if decision == 'ignore':
-        notify_telegram("❌ Post ignoré pour aujourd'hui.")
-        print("❌ Post ignoré.")
+        for lang in langs_to_publish:
+            lang_label = lang.upper()
+            print(f"🚀 Publication {lang_label}...")
+            post_text = posts.get(lang, '')
+            img_bytes = images.get(lang)
+
+            image_urn = None
+            if img_bytes:
+                print(f"  📸 Upload image {lang_label}...")
+                image_urn = upload_image_linkedin(img_bytes, author_urn)
+
+            post_id = publish_linkedin(post_text, author_urn, image_urn)
+
+            if post_id:
+                post_source_comment(post_id, best_article['url'], author_urn)
+                notify_telegram(f"✅ Post {lang_label} publié sur LinkedIn !")
+            else:
+                notify_telegram(f"❌ Erreur lors de la publication {lang_label}.")
+
+        save_history(best_article, decision, langs_to_publish)
+
+        print("=" * 50)
+        print("✅ PIPELINE TERMINÉ")
+        print("=" * 50)
         return
-
-    if decision == 'publish_all':
-        langs_to_publish = ['en', 'fr', 'es']
-    elif decision == 'publish_en':
-        langs_to_publish = ['en']
-    elif decision == 'publish_fr':
-        langs_to_publish = ['fr']
-    elif decision == 'publish_es':
-        langs_to_publish = ['es']
-    else:
-        langs_to_publish = []
-
-    if not langs_to_publish:
-        print("Aucune langue à publier.")
-        return
-
-    print("🔑 Identification du compte LinkedIn...")
-    author_urn = get_linkedin_urn()
-    if not author_urn:
-        notify_telegram("❌ Erreur : impossible de récupérer ton profil LinkedIn. Vérifie le token.")
-        return
-
-    for lang in langs_to_publish:
-        lang_label = lang.upper()
-        print(f"🚀 Publication {lang_label}...")
-
-        post_text = posts.get(lang, '')
-        img_bytes = images.get(lang)
-
-        image_urn = None
-        if img_bytes:
-            print(f"  📸 Upload image {lang_label}...")
-            image_urn = upload_image_linkedin(img_bytes, author_urn)
-
-        post_id = publish_linkedin(post_text, author_urn, image_urn)
-
-        if post_id:
-            post_source_comment(post_id, best_article['url'], author_urn)
-            notify_telegram(f"✅ Post {lang_label} publié sur LinkedIn !")
-        else:
-            notify_telegram(f"❌ Erreur lors de la publication {lang_label}.")
-
-    print("=" * 50)
-    print("✅ PIPELINE TERMINÉ")
-    print("=" * 50)
 
 
 if __name__ == "__main__":
