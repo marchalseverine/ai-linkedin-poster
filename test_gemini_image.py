@@ -26,9 +26,13 @@ print("📦 SDK google-genai OK")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 prompt = (
-    "A modern minimalist tech illustration for LinkedIn. "
-    "Dark background, coral red accent shapes, white geometric elements. "
-    "No text in the image. Clean, professional, abstract."
+    "Editorial photography style, moody studio shot. "
+    "A close-up of a developer's hands on a dark mechanical keyboard, "
+    "soft coral-red light (#FF6B6B) casting a single accent glow from the side, "
+    "deep black background (#1A1A1A), white highlights on fingertips. "
+    "Shot on medium format, shallow depth of field, no motion blur. "
+    "Atmosphere: focused, skilled, human. "
+    "No text, no logos, no screens visible. Clean composition."
 )
 
 flash_models = [
