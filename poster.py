@@ -14,8 +14,6 @@ TELEGRAM_BOT_TOKEN    = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID      = os.environ['TELEGRAM_CHAT_ID']
 LINKEDIN_ACCESS_TOKEN = os.environ['LINKEDIN_ACCESS_TOKEN']
 
-# LinkedIn REST API version — format YYYYMM (6 chiffres, PAS de jour)
-# LinkedIn supporte les versions sur ~2 ans — 202503 = Mars 2025, dans la fenêtre active
 LINKEDIN_VERSION = "202503"
 
 RSS_FEEDS = [
@@ -68,7 +66,6 @@ L'index doit être entre 0 et {len(articles)-1}."""
     )
 
     text = response.content[0].text.strip()
-    # Nettoie les balises markdown si Claude en ajoute
     text = re.sub(r'```(?:json)?\s*', '', text).strip('`').strip()
 
     result = json.loads(text)
@@ -128,7 +125,6 @@ Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
 
     result = json.loads(text)
 
-    # Nettoyage : supprime les caractères trop "AI" dans chaque post
     for lang in ['en', 'fr', 'es']:
         if lang in result:
             result[lang] = clean_post_text(result[lang])
@@ -137,16 +133,12 @@ Réponds UNIQUEMENT avec ce JSON valide (sans markdown, sans backticks) :
 
 # ── 3b. Clean AI-typical characters ──────────────────────────────────────────
 def clean_post_text(text):
-    """Supprime les caractères typiquement IA et humanise le texte."""
-    # Em-dash et en-dash → virgule ou point selon contexte
     text = text.replace(' — ', ', ')
     text = text.replace('—', ', ')
     text = text.replace(' – ', ', ')
     text = text.replace('–', '-')
-    # Guillemets typographiques → guillemets droits (plus naturels en post)
     text = text.replace('\u201c', '"').replace('\u201d', '"')
     text = text.replace('\u2018', "'").replace('\u2019', "'")
-    # Ellipses fancy → simple
     text = text.replace('\u2026', '...')
     return text.strip()
 
@@ -160,34 +152,36 @@ def generate_image(prompt_text, lang):
         f"Topic: {prompt_text}"
     )
 
-    # Tentative 1 : Gemini gemini-2.0-flash-exp (moteur de Nano Banana)
     try:
         from google import genai
         from google.genai import types as gtypes
-
         client = genai.Client(api_key=GEMINI_API_KEY)
+    except ImportError:
+        print("    ❌ google-genai non installé")
+        return None
+
+    # Tentative 1 : gemini-2.5-flash-preview-image (modèle GA image generation)
+    try:
+        print(f"  🎨 Tentative gemini-2.5-flash-preview-image pour {lang}...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash-preview-image",
             contents=full_prompt,
             config=gtypes.GenerateContentConfig(
                 response_modalities=["IMAGE", "TEXT"]
             )
         )
-        for part in response.candidates[0].content.parts:
+        for part in response.parts:
             if part.inline_data is not None:
                 img_bytes = part.inline_data.data
-                print(f"    ✅ Image Gemini (Nano Banana) générée ({len(img_bytes)//1024}KB)")
+                print(f"    ✅ Image (gemini-2.5-flash-preview-image) générée ({len(img_bytes)//1024}KB)")
                 return img_bytes
-        print("    Gemini : réponse reçue mais pas d'image")
+        print("    gemini-2.5-flash-preview-image : pas d'image dans response.parts")
     except Exception as e:
-        print(f"    Gemini echec: {e}")
+        print(f"    gemini-2.5-flash-preview-image échec: {e}")
 
-    # Tentative 2 : Imagen 3 (nécessite billing Google Cloud)
+    # Tentative 2 : Imagen 3
     try:
-        from google import genai
-        from google.genai import types as gtypes
-
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        print(f"  🎨 Tentative imagen-3.0-generate-001 pour {lang}...")
         response = client.models.generate_images(
             model="imagen-3.0-generate-001",
             prompt=full_prompt,
@@ -199,88 +193,12 @@ def generate_image(prompt_text, lang):
                 print(f"    ✅ Image Imagen 3 générée ({len(img_bytes)//1024}KB)")
                 return img_bytes
     except Exception as e:
-        print(f"    Imagen 3 echec: {e}")
+        print(f"    Imagen 3 échec: {e}")
 
-    # Tentative 3 : Génération locale avec Pillow — toujours disponible
-    print(f"    → Fallback Pillow (local)...")
-    return generate_branded_image_local(prompt_text, lang)
+    print(f"    ⚠️ Tous les modèles Gemini ont échoué pour {lang} — post sans image")
+    return None
 
-
-def generate_branded_image_local(topic_hint, lang):
-    """
-    Génère une image branded minimaliste tech avec Pillow.
-    Fond sombre #1A1A1A, accents corail #FF6B6B, formes géométriques.
-    Aucune API externe — toujours disponible.
-    """
-    import math, random, io
-    from PIL import Image, ImageDraw
-
-    seed = abs(hash(lang + topic_hint[:40]))
-    rng  = random.Random(seed)
-    W, H = 1024, 1024
-    BG    = (26, 26, 26)
-    CORAL = (255, 107, 107)
-
-    img  = Image.new("RGB", (W, H), BG)
-    draw = ImageDraw.Draw(img, "RGBA")
-
-    # Grille subtile en fond
-    for x in range(0, W, 64):
-        draw.line([(x, 0), (x, H)], fill=(45, 45, 45, 255), width=1)
-    for y in range(0, H, 64):
-        draw.line([(0, y), (W, y)], fill=(45, 45, 45, 255), width=1)
-
-    # Cercles concentriques corail (bas-droite)
-    cx, cy = int(W * 0.80), int(H * 0.75)
-    for r in range(360, 0, -55):
-        alpha = max(20, int(15 + (360 - r) * 0.15))
-        draw.ellipse([cx-r, cy-r, cx+r, cy+r],
-                     outline=(255, 107, 107, alpha), width=2)
-
-    # Grand triangle blanc (centre-gauche)
-    tri_cx, tri_cy, tri_r = int(W * 0.32), int(H * 0.42), 180
-    pts = [(tri_cx + tri_r * math.cos(math.pi/2 + 2*math.pi*i/3),
-            tri_cy - tri_r * math.sin(math.pi/2 + 2*math.pi*i/3)) for i in range(3)]
-    draw.polygon(pts, fill=(255, 255, 255, 35), outline=(255, 255, 255, 130))
-
-    # Hexagone corail (haut-droite)
-    hx, hy, hr = int(W * 0.70), int(H * 0.28), 110
-    hpts = [(hx + hr * math.cos(math.pi/6 + math.pi*i/3),
-             hy + hr * math.sin(math.pi/6 + math.pi*i/3)) for i in range(6)]
-    draw.polygon(hpts, fill=(255, 107, 107, 30), outline=(255, 107, 107, 160))
-
-    # Petit carré blanc rotatif (centre)
-    sq_cx, sq_cy, sq_r = int(W * 0.55), int(H * 0.55), 55
-    angle = math.pi / 6
-    sqpts = [(sq_cx + sq_r * math.cos(angle + math.pi/2 * i),
-              sq_cy + sq_r * math.sin(angle + math.pi/2 * i)) for i in range(4)]
-    draw.polygon(sqpts, fill=(255, 255, 255, 25), outline=(255, 255, 255, 110))
-
-    # Lignes diagonales corail
-    for x1, y1, x2, y2 in [(80, 300, 260, 160), (200, 680, 380, 560), (620, 100, 750, 220)]:
-        draw.line([(x1, y1), (x2, y2)], fill=(255, 107, 107, 140), width=2)
-
-    # Points lumineux (constellation)
-    for _ in range(18):
-        px = rng.randint(50, W-50)
-        py = rng.randint(50, H-50)
-        pr = rng.randint(2, 5)
-        alpha = rng.randint(80, 200)
-        color = CORAL if rng.random() > 0.6 else (255, 255, 255)
-        draw.ellipse([px-pr, py-pr, px+pr, py+pr], fill=(*color, alpha))
-
-    # Barre corail en bas + accent top-left
-    draw.rectangle([(0, H-12), (W, H)], fill=CORAL)
-    draw.rectangle([(36, 36), (80, 80)], fill=CORAL)
-    draw.rectangle([(88, 36), (102, 80)], fill=(255, 107, 107, 180))
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    img_bytes = buf.getvalue()
-    print(f"    ✅ Image générée en local ({len(img_bytes)//1024}KB)")
-    return img_bytes
-
-# ── 5. Send Telegram preview (images + textes + boutons) ──────────────────────
+# ── 5. Send Telegram preview ──────────────────────────────────────────────────
 def send_telegram_preview(posts, article, images, score):
     base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
     date_str = datetime.now().strftime("%d/%m/%Y")
@@ -291,11 +209,10 @@ def send_telegram_preview(posts, article, images, score):
         ('es', '🇪🇸 ES'),
     ]
 
-    # Envoie chaque post avec son image en caption
     for lang_code, lang_label in langs:
         post_text = posts.get(lang_code, '')
         img_bytes = images.get(lang_code)
-        caption = f"{lang_label}\n\n{post_text[:1024]}"  # limite Telegram caption
+        caption = f"{lang_label}\n\n{post_text[:1024]}"
 
         if img_bytes:
             try:
@@ -312,13 +229,11 @@ def send_telegram_preview(posts, article, images, score):
             except Exception as e:
                 print(f"  ⚠️  sendPhoto échec pour {lang_code}: {e}")
 
-        # Fallback texte seul
         requests.post(f"{base_url}/sendMessage", json={
             'chat_id': TELEGRAM_CHAT_ID,
             'text': f"⚠️ Sans image\n\n{caption}"
         })
 
-    # Message de validation avec boutons inline
     keyboard = {
         "inline_keyboard": [
             [
@@ -392,7 +307,6 @@ def get_linkedin_urn():
         sub = data.get('sub', '')
         name = data.get('name', 'inconnu')
         print(f"  ✅ Compte LinkedIn identifié : {name} (sub: {sub})")
-        # sub peut être "urn:li:person:XXX" ou juste "XXX"
         if sub.startswith('urn:li:person:'):
             return sub
         else:
@@ -410,7 +324,6 @@ def upload_image_linkedin(img_bytes, author_urn):
         'Content-Type': 'application/json',
     }
 
-    # Étape 1 : initialiser l'upload
     init_payload = {"initializeUploadRequest": {"owner": author_urn}}
     resp = requests.post(
         'https://api.linkedin.com/rest/images?action=initializeUpload',
@@ -430,7 +343,6 @@ def upload_image_linkedin(img_bytes, author_urn):
         print(f"  ❌ Missing uploadUrl or image URN: {data}")
         return None
 
-    # Étape 2 : upload binaire
     upload_resp = requests.put(
         upload_url,
         headers={
@@ -498,7 +410,7 @@ def post_source_comment(post_id, source_url, author_urn):
     if not post_id:
         return
 
-    time.sleep(30)  # Attendre que le post soit indexé
+    time.sleep(30)
 
     headers = {
         'Authorization': f'Bearer {LINKEDIN_ACCESS_TOKEN}',
@@ -532,22 +444,18 @@ def main():
     print("🤖 AI LINKEDIN POSTER — Démarrage")
     print("=" * 50)
 
-    # Étape 1 : News
     print("📡 Recherche des news AI...")
     articles = fetch_news()
     print(f"✅ {len(articles)} articles trouvés")
 
-    # Étape 2 : Scoring
     print("🧠 Scoring des news avec Claude...")
     best_article, score = score_news(articles)
     print(f"✅ Meilleure news ({score}/10) : {best_article['title']}")
 
-    # Étape 3 : Génération posts EN/FR/ES
     print("✍️  Génération des posts LinkedIn en EN/FR/ES...")
     posts = generate_posts(best_article)
     print("✅ Posts générés en EN, FR, ES")
 
-    # Étape 4 : Génération images
     print("🎨 Génération des images avec Gemini...")
     images = {}
     image_prompts = posts.get('image_prompts', {})
@@ -562,12 +470,10 @@ def main():
             images[lang] = None
             print(f"  ⚠️  Image {lang.upper()} ignorée — post publié sans image")
 
-    # Étape 5 : Preview Telegram
     print("📱 Envoi du preview sur Telegram...")
     send_telegram_preview(posts, best_article, images, score)
     print("✅ Preview envoyé sur Telegram — en attente de ta validation...")
 
-    # Étape 6 : Validation
     decision = wait_for_validation()
     print(f"✅ Décision reçue : {decision}")
 
@@ -576,7 +482,6 @@ def main():
         print("❌ Post ignoré.")
         return
 
-    # Langues à publier
     if decision == 'publish_all':
         langs_to_publish = ['en', 'fr', 'es']
     elif decision == 'publish_en':
@@ -592,14 +497,12 @@ def main():
         print("Aucune langue à publier.")
         return
 
-    # Étape 7 : Récupérer URN LinkedIn (= quel compte)
     print("🔑 Identification du compte LinkedIn...")
     author_urn = get_linkedin_urn()
     if not author_urn:
         notify_telegram("❌ Erreur : impossible de récupérer ton profil LinkedIn. Vérifie le token.")
         return
 
-    # Étape 8 : Publication
     for lang in langs_to_publish:
         lang_label = lang.upper()
         print(f"🚀 Publication {lang_label}...")
@@ -607,13 +510,11 @@ def main():
         post_text = posts.get(lang, '')
         img_bytes = images.get(lang)
 
-        # Upload image si disponible
         image_urn = None
         if img_bytes:
             print(f"  📸 Upload image {lang_label}...")
             image_urn = upload_image_linkedin(img_bytes, author_urn)
 
-        # Publier le post
         post_id = publish_linkedin(post_text, author_urn, image_urn)
 
         if post_id:
