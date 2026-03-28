@@ -160,40 +160,45 @@ def generate_image(prompt_text, lang):
         print("    ❌ google-genai non installé")
         return None
 
-    # Tentative 1 : gemini-2.5-flash-preview-image (modèle GA image generation)
-    try:
-        print(f"  🎨 Tentative gemini-2.5-flash-preview-image pour {lang}...")
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-preview-image",
-            contents=full_prompt,
-            config=gtypes.GenerateContentConfig(
-                response_modalities=["IMAGE", "TEXT"]
-            )
-        )
-        for part in response.parts:
-            if part.inline_data is not None:
-                img_bytes = part.inline_data.data
-                print(f"    ✅ Image (gemini-2.5-flash-preview-image) générée ({len(img_bytes)//1024}KB)")
-                return img_bytes
-        print("    gemini-2.5-flash-preview-image : pas d'image dans response.parts")
-    except Exception as e:
-        print(f"    gemini-2.5-flash-preview-image échec: {e}")
+    flash_models = [
+        "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image-preview",
+    ]
 
-    # Tentative 2 : Imagen 3
+    for model_name in flash_models:
+        try:
+            print(f"  🎨 Tentative {model_name} pour {lang}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=full_prompt,
+                config=gtypes.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"]
+                )
+            )
+            for part in response.candidates[0].content.parts:
+                if part.inline_data is not None:
+                    img_bytes = part.inline_data.data
+                    print(f"    ✅ Image ({model_name}) générée ({len(img_bytes)//1024}KB)")
+                    return img_bytes
+            print(f"    {model_name} : pas d'image dans les parts")
+        except Exception as e:
+            print(f"    {model_name} échec: {e}")
+
+    # Tentative finale : Imagen 4
     try:
-        print(f"  🎨 Tentative imagen-3.0-generate-001 pour {lang}...")
+        print(f"  🎨 Tentative imagen-4.0-generate-001 pour {lang}...")
         response = client.models.generate_images(
-            model="imagen-3.0-generate-001",
+            model="imagen-4.0-generate-001",
             prompt=full_prompt,
             config=gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1")
         )
         if response.generated_images:
             img_bytes = response.generated_images[0].image.image_bytes
             if img_bytes:
-                print(f"    ✅ Image Imagen 3 générée ({len(img_bytes)//1024}KB)")
+                print(f"    ✅ Image Imagen 4 générée ({len(img_bytes)//1024}KB)")
                 return img_bytes
     except Exception as e:
-        print(f"    Imagen 3 échec: {e}")
+        print(f"    Imagen 4 échec: {e}")
 
     print(f"    ⚠️ Tous les modèles Gemini ont échoué pour {lang} — post sans image")
     return None

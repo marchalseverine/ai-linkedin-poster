@@ -31,39 +31,43 @@ prompt = (
     "No text in the image. Clean, professional, abstract."
 )
 
-# Test modèle gemini-2.0-flash-exp (= Nano Banana)
-print("🎨 Génération avec gemini-2.0-flash-exp...")
-try:
-    response = client.models.generate_content(
-        model="gemini-2.0-flash-exp",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE", "TEXT"]
+flash_models = [
+    "gemini-2.5-flash-image",
+    "gemini-3.1-flash-image-preview",
+]
+
+image_found = False
+for model_name in flash_models:
+    if image_found:
+        break
+    print(f"🎨 Génération avec {model_name}...")
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"]
+            )
         )
-    )
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                img_bytes = part.inline_data.data
+                with open("gemini_test_output.png", "wb") as f:
+                    f.write(img_bytes)
+                print(f"✅ Image générée ({model_name}) : {len(img_bytes)//1024}KB → gemini_test_output.png")
+                image_found = True
+                break
+        if not image_found:
+            print(f"⚠️  {model_name} : réponse reçue mais pas d'image dans les parts")
+            print("   Parts reçus :", [type(p).__name__ for p in response.candidates[0].content.parts])
+    except Exception as e:
+        print(f"❌ {model_name} échec: {e}")
 
-    image_found = False
-    for part in response.candidates[0].content.parts:
-        if part.inline_data is not None:
-            img_bytes = part.inline_data.data
-            with open("gemini_test_output.png", "wb") as f:
-                f.write(img_bytes)
-            print(f"✅ Image générée : {len(img_bytes)//1024}KB → gemini_test_output.png")
-            image_found = True
-            break
-
-    if not image_found:
-        print("⚠️  Réponse reçue mais pas d'image dans les parts")
-        print("   Parts reçus :", [type(p).__name__ for p in response.candidates[0].content.parts])
-
-except Exception as e:
-    print(f"❌ gemini-2.0-flash-exp échec: {e}")
-
-    # Fallback : tenter imagen-3.0
-    print("\n🎨 Tentative avec imagen-3.0-generate-001...")
+if not image_found:
+    print("\n🎨 Tentative avec imagen-4.0-generate-001...")
     try:
         response2 = client.models.generate_images(
-            model="imagen-3.0-generate-001",
+            model="imagen-4.0-generate-001",
             prompt=prompt,
             config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="1:1")
         )
