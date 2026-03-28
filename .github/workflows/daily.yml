@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    timeout-minutes: 90     # 90 min max (60 min d'attente + marge)
+    timeout-minutes: 120    # 120 min max (session multi-posts possible)
 
     steps:
       - name: Checkout code
