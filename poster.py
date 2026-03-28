@@ -145,11 +145,14 @@ def clean_post_text(text):
 # ── 4. Generate image ─────────────────────────────────────────────────────────
 def generate_image(prompt_text, lang):
     full_prompt = (
-        "A modern minimalist tech illustration for LinkedIn. "
-        "Dark background (#1A1A1A), coral red accent color (#FF6B6B), "
-        "white geometric shapes, professional and clean. "
-        "No text, no words, no letters in the image. Abstract concept only. "
-        f"Topic: {prompt_text}"
+        "Editorial photography style, moody studio shot. "
+        "A close-up of a developer's hands on a dark mechanical keyboard, "
+        "soft coral-red light (#FF6B6B) casting a single accent glow from the side, "
+        "deep black background (#1A1A1A), white highlights on fingertips. "
+        "Shot on medium format, shallow depth of field, no motion blur. "
+        "Atmosphere: focused, skilled, human. "
+        "No text, no logos, no screens visible. Clean composition. "
+        f"Visual mood inspired by: {prompt_text}"
     )
 
     try:
