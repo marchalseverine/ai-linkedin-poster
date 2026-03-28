@@ -22,76 +22,104 @@ jobs:
           GITHUB_REPOSITORY:  ${{ github.repository }}
         run: |
           python3 << 'PYEOF'
-          import os, time, requests
+          import os, time, json
+          from urllib.request import urlopen, Request
+          from urllib.parse import urlencode
+          from urllib.error import HTTPError
 
-          TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
-          CHAT_ID = str(os.environ['TELEGRAM_CHAT_ID'])
+          TOKEN    = os.environ['TELEGRAM_BOT_TOKEN']
+          CHAT_ID  = str(os.environ['TELEGRAM_CHAT_ID'])
           GH_TOKEN = os.environ['GITHUB_TOKEN']
-          REPO = os.environ['GITHUB_REPOSITORY']
+          REPO     = os.environ['GITHUB_REPOSITORY']
 
-          # Accept "run" messages from the last 12 minutes
-          cutoff = int(time.time()) - 720
+          def tg_get(method, params=None):
+              url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+              if params:
+                  url += "?" + urlencode(params)
+              with urlopen(url, timeout=10) as r:
+                  return json.loads(r.read())
 
-          resp = requests.get(
-              f"https://api.telegram.org/bot{TOKEN}/getUpdates",
-              params={'limit': 30, 'allowed_updates': ['message']},
-              timeout=10
-          )
-          updates = resp.json().get('result', [])
+          def tg_post(method, payload):
+              url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+              data = json.dumps(payload).encode()
+              req = Request(url, data=data, headers={"Content-Type": "application/json"})
+              with urlopen(req, timeout=10) as r:
+                  return json.loads(r.read())
 
+          def gh_get(path, params=None):
+              url = f"https://api.github.com{path}"
+              if params:
+                  url += "?" + urlencode(params)
+              req = Request(url, headers={
+                  "Authorization": f"Bearer {GH_TOKEN}",
+                  "Accept": "application/vnd.github+json",
+              })
+              with urlopen(req, timeout=10) as r:
+                  return json.loads(r.read())
+
+          def gh_post(path, payload):
+              url = f"https://api.github.com{path}"
+              data = json.dumps(payload).encode()
+              req = Request(url, data=data, headers={
+                  "Authorization": f"Bearer {GH_TOKEN}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+              })
+              try:
+                  with urlopen(req, timeout=10) as r:
+                      return r.status
+              except HTTPError as e:
+                  print(f"  HTTP {e.code}: {e.read().decode()}")
+                  return e.code
+
+          # Accept "run" messages from the last 8 minutes
+          cutoff = int(time.time()) - 480
+          print(f"Checking Telegram for 'run' since {cutoff} (now: {int(time.time())})")
+
+          data = tg_get("getUpdates", {"limit": 50, "allowed_updates": "message"})
+          updates = data.get("result", [])
+          print(f"  {len(updates)} updates retrieved")
+
+          found = False
           for update in updates:
-              if 'message' not in update:
+              if "message" not in update:
                   continue
-              msg = update['message']
-              if msg.get('date', 0) < cutoff:
+              msg   = update["message"]
+              msg_date = msg.get("date", 0)
+              msg_chat = str(msg.get("chat", {}).get("id", ""))
+              msg_text = msg.get("text", "").strip().lower()
+              print(f"  msg date={msg_date} chat={msg_chat} text={repr(msg_text)}")
+
+              if msg_date < cutoff:
                   continue
-              if str(msg.get('chat', {}).get('id', '')) != CHAT_ID:
+              if msg_chat != CHAT_ID:
+                  print(f"    ↳ chat mismatch (expected {CHAT_ID})")
                   continue
-              text = msg.get('text', '').strip().lower()
-              if text not in ('run', '/run'):
+              if msg_text not in ("run", "/run"):
                   continue
 
-              # Don't trigger if a poster run is already in progress
-              check = requests.get(
-                  f"https://api.github.com/repos/{REPO}/actions/runs",
-                  headers={
-                      'Authorization': f'Bearer {GH_TOKEN}',
-                      'Accept': 'application/vnd.github+json',
-                  },
-                  params={'status': 'in_progress'},
-                  timeout=10
-              )
-              active = [
-                  r for r in check.json().get('workflow_runs', [])
-                  if 'poster' in r.get('name', '').lower() or 'daily' in r.get('name', '').lower()
-              ]
+              print("  ✅ 'run' command found — checking active runs...")
+              found = True
+
+              runs = gh_get(f"/repos/{REPO}/actions/runs", {"status": "in_progress"})
+              active = [r for r in runs.get("workflow_runs", [])
+                        if "poster" in r.get("name","").lower() or "daily" in r.get("name","").lower()]
               if active:
-                  print("⚠️  Poster déjà en cours, skip")
+                  print(f"  ⚠️  Poster already running ({active[0]['name']}), skip")
                   break
 
-              # Trigger daily.yml
-              trigger = requests.post(
-                  f"https://api.github.com/repos/{REPO}/actions/workflows/daily.yml/dispatches",
-                  headers={
-                      'Authorization': f'Bearer {GH_TOKEN}',
-                      'Accept': 'application/vnd.github+json',
-                  },
-                  json={'ref': 'main'},
-                  timeout=10
-              )
-
-              if trigger.status_code == 204:
-                  requests.post(
-                      f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                      json={
-                          'chat_id': CHAT_ID,
-                          'text': '🚀 Run lancé ! Tu recevras les articles dans quelques instants.'
-                      },
-                      timeout=10
-                  )
-                  print("✅ Workflow triggered")
+              status = gh_post(f"/repos/{REPO}/actions/workflows/daily.yml/dispatches", {"ref": "main"})
+              if status == 204:
+                  tg_post("sendMessage", {
+                      "chat_id": CHAT_ID,
+                      "text": "🚀 Run lancé ! Tu recevras les articles dans quelques instants."
+                  })
+                  print("  ✅ Workflow dispatched")
               else:
-                  print(f"❌ Trigger failed ({trigger.status_code}): {trigger.text}")
+                  print(f"  ❌ Dispatch failed (status {status})")
               break
+
+          if not found:
+              print("No recent 'run' command found")
 
           PYEOF
