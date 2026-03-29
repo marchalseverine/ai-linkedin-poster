@@ -2,8 +2,8 @@ name: Telegram Run Listener
 
 on:
   schedule:
-    # Every 5 min, 6h-21h UTC (= 7h-22h Valencia)
-    - cron: "*/5 6-21 * * *"
+    # Every 30 min, 5h-20h UTC (= 7h-22h Valencia CEST UTC+2)
+    - cron: "*/30 5-20 * * *"
   workflow_dispatch:
 
 jobs:

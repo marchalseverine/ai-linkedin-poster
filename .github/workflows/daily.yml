@@ -2,7 +2,7 @@ name: AI LinkedIn Daily Poster
 
 on:
   schedule:
-    - cron: "0 7 * * *"   # Tous les jours à 8h heure de Valencia (UTC+1)
+    - cron: "0 6 * * *"   # Tous les jours à 8h heure de Valencia (UTC+2 été)
   workflow_dispatch:        # Bouton "Run workflow" manuel sur GitHub
 
 jobs:
