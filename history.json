@@ -14,5 +14,14 @@
     "url": "https://techcrunch.com/2026/03/27/why-softbanks-new-40b-loan-points-to-a-2026-openai-ipo/",
     "decision": "ignored",
     "langs": []
+  },
+  {
+    "date": "2026-03-30",
+    "title": "Why OpenAI really shut down Sora",
+    "url": "https://techcrunch.com/2026/03/29/why-openai-really-shut-down-sora/",
+    "decision": "publish_es",
+    "langs": [
+      "es"
+    ]
   }
 ]
