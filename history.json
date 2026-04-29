@@ -123,5 +123,12 @@
     "url": "https://techcrunch.com/2026/04/27/deepminds-david-silver-just-raised-1-1b-to-build-an-ai-that-learns-without-human-data/",
     "decision": "ignored",
     "langs": []
+  },
+  {
+    "date": "2026-04-29",
+    "title": "South Africa used AI to write its AI policy. The citations were fake.",
+    "url": "https://thenextweb.com/news/south-africa-ai-policy-hallucinated-citations",
+    "decision": "ignored",
+    "langs": []
   }
 ]
