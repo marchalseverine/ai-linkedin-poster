@@ -165,5 +165,12 @@
     "url": "https://techcrunch.com/2026/05/08/cloudflare-says-ai-made-1100-jobs-obsolete-even-as-revenue-hit-a-record-high/",
     "decision": "ignored",
     "langs": []
+  },
+  {
+    "date": "2026-05-10",
+    "title": "Anthropic’s Mythos found thousands of zero-day vulnerabilities. The Fed chair called the banks.",
+    "url": "https://thenextweb.com/news/anthropic-mythos-cybersecurity-banks-vulnerability",
+    "decision": "ignored",
+    "langs": []
   }
 ]
