@@ -172,5 +172,12 @@
     "url": "https://thenextweb.com/news/anthropic-mythos-cybersecurity-banks-vulnerability",
     "decision": "ignored",
     "langs": []
+  },
+  {
+    "date": "2026-05-12",
+    "title": "Live updates from Elon Musk and Sam Altman’s court battle over the future of OpenAI",
+    "url": "https://www.theverge.com/tech/917225/sam-altman-elon-musk-openai-lawsuit",
+    "decision": "ignored",
+    "langs": []
   }
 ]
